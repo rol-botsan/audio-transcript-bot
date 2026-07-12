@@ -21,8 +21,8 @@ def get_client() -> Client:
 
 def find_contact_page_id(name: str) -> str | None:
     client = get_client()
-    response = client.databases.query(
-        database_id=config.NOTION_CRM_DATABASE_ID,
+    response = client.data_sources.query(
+        data_source_id=config.NOTION_CRM_DATA_SOURCE_ID,
         filter={"property": "Nom", "title": {"equals": name}},
     )
     results = response.get("results", [])
@@ -32,7 +32,7 @@ def find_contact_page_id(name: str) -> str | None:
 def create_contact_page(name: str) -> str:
     client = get_client()
     page = client.pages.create(
-        parent={"type": "database_id", "database_id": config.NOTION_CRM_DATABASE_ID},
+        parent={"type": "data_source_id", "data_source_id": config.NOTION_CRM_DATA_SOURCE_ID},
         properties={"Nom": {"title": [{"text": {"content": name}}]}},
     )
     return page["id"]
