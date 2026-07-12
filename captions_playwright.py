@@ -18,6 +18,7 @@ async def _get_context(playwright, headless: bool):
         str(user_data_dir),
         headless=headless,
         channel="chrome",
+        args=["--no-sandbox"],
     )
 
 
