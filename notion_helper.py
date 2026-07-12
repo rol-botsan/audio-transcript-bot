@@ -1,7 +1,8 @@
-"""Association d'un appel transcrit a un contact du CRM Notion existant.
+"""Association d'un appel transcrit a un contact Notion (CRM Pika ou espace
+"Appel et retranscription" par defaut).
 
-Recherche le contact par nom (propriete "Nom", titre de la database). Cree le
-contact si aucune correspondance, puis ajoute l'appel comme sous-page du
+Recherche le contact par nom (propriete "Nom", titre de la data source). Cree
+le contact si aucune correspondance, puis ajoute l'appel comme sous-page du
 contact (resume / points cles / prochaines etapes).
 """
 
@@ -19,30 +20,30 @@ def get_client() -> Client:
     return _client
 
 
-def find_contact_page_id(name: str) -> str | None:
+def find_contact_page_id(name: str, data_source_id: str) -> str | None:
     client = get_client()
     response = client.data_sources.query(
-        data_source_id=config.NOTION_CRM_DATA_SOURCE_ID,
+        data_source_id=data_source_id,
         filter={"property": "Nom", "title": {"equals": name}},
     )
     results = response.get("results", [])
     return results[0]["id"] if results else None
 
 
-def create_contact_page(name: str) -> str:
+def create_contact_page(name: str, data_source_id: str) -> str:
     client = get_client()
     page = client.pages.create(
-        parent={"type": "data_source_id", "data_source_id": config.NOTION_CRM_DATA_SOURCE_ID},
+        parent={"type": "data_source_id", "data_source_id": data_source_id},
         properties={"Nom": {"title": [{"text": {"content": name}}]}},
     )
     return page["id"]
 
 
-def get_or_create_contact_page_id(name: str) -> str:
-    page_id = find_contact_page_id(name)
+def get_or_create_contact_page_id(name: str, data_source_id: str) -> str:
+    page_id = find_contact_page_id(name, data_source_id)
     if page_id:
         return page_id
-    return create_contact_page(name)
+    return create_contact_page(name, data_source_id)
 
 
 def _bulleted_list(items: list[str]) -> list[dict]:

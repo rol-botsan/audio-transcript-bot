@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +23,19 @@ def _is_authorized(update: Update) -> bool:
     return bool(update.effective_chat) and update.effective_chat.id == config.TELEGRAM_CHAT_ID
 
 
+_APPELS_MARKER_RE = re.compile(r"\bappel et retranscription\b", re.IGNORECASE)
+
+
+def _parse_caption(caption: str) -> tuple[str, str]:
+    """Retourne (nom_contact, data_source_id). Par défaut -> CRM Pika, sauf si
+    le texte mentionne explicitement "Appel et retranscription"."""
+    if _APPELS_MARKER_RE.search(caption):
+        name = _APPELS_MARKER_RE.sub("", caption)
+        name = re.sub(r"^[\s:;,\-–—]+|[\s:;,\-–—]+$", "", name).strip()
+        return name, config.NOTION_APPELS_DATA_SOURCE_ID
+    return caption.strip(), config.NOTION_CRM_DATA_SOURCE_ID
+
+
 async def _send_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str, retries: int = 3) -> None:
     for attempt in range(retries):
         try:
@@ -39,7 +53,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Envoie-moi un fichier audio (.mp3/.m4a/.amr) en ajoutant le nom de la "
         "personne dans le message (texte accompagnant le fichier). "
-        "Je transcris l'appel et je le logue dans son dossier Notion."
+        "Par défaut, j'associe l'appel au CRM Pika. Ajoute \"Appel et "
+        "retranscription\" dans le texte si ça n'a rien à voir avec Pika."
     )
 
 
@@ -52,11 +67,17 @@ async def handle_audio_file(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if audio_obj is None:
         return
 
-    contact_name = (message.caption or "").strip()
-    if not contact_name:
+    caption = (message.caption or "").strip()
+    if not caption:
         await message.reply_text(
-            "Merci d'ajouter le nom de la personne dans le message accompagnant l'audio."
+            "Merci d'ajouter le nom de la personne dans le message accompagnant l'audio "
+            "(ajoute \"Appel et retranscription\" dans le texte si ce n'est pas lié à Pika)."
         )
+        return
+
+    contact_name, data_source_id = _parse_caption(caption)
+    if not contact_name:
+        await message.reply_text("Nom de la personne manquant dans le message.")
         return
 
     original_name = getattr(audio_obj, "file_name", None) or f"audio_{audio_obj.file_unique_id}"
@@ -69,7 +90,9 @@ async def handle_audio_file(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     audio_path = WORK_DIR / f"{audio_obj.file_unique_id}{ext}"
     await tg_file.download_to_drive(custom_path=str(audio_path))
 
-    asyncio.create_task(_process_audio(context, message.chat_id, audio_path, contact_name, call_time))
+    asyncio.create_task(
+        _process_audio(context, message.chat_id, audio_path, contact_name, data_source_id, call_time)
+    )
 
 
 async def _process_audio(
@@ -77,13 +100,16 @@ async def _process_audio(
     chat_id: int,
     audio_path: Path,
     contact_name: str,
+    data_source_id: str,
     call_time: datetime,
 ) -> None:
     try:
         transcript = await asyncio.to_thread(transcribe_audio, audio_path)
         summary = await asyncio.to_thread(summarize_call, transcript, contact_name)
 
-        contact_page_id = await asyncio.to_thread(get_or_create_contact_page_id, contact_name)
+        contact_page_id = await asyncio.to_thread(
+            get_or_create_contact_page_id, contact_name, data_source_id
+        )
 
         title = f"Appel — {call_time.strftime('%d/%m/%Y %H:%M')}"
         call_page_id = await asyncio.to_thread(
