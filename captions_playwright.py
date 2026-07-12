@@ -17,6 +17,7 @@ async def _get_context(playwright, headless: bool):
     return await playwright.chromium.launch_persistent_context(
         str(user_data_dir),
         headless=headless,
+        channel="chrome",
     )
 
 
