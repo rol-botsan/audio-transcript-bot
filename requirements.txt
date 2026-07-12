@@ -1,6 +1,5 @@
 python-telegram-bot==22.8
-google-api-python-client==2.149.0
-google-auth-httplib2
-google-auth-oauthlib
-playwright
 python-dotenv
+faster-whisper
+anthropic
+notion-client

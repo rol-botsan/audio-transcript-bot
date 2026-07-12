@@ -1,64 +1,58 @@
-# État du projet (pause en cours)
+# État du projet
 
-## Ce qui fonctionne déjà (déployé sur le VPS Hetzner)
+## Pivot de direction (2026-07-12)
 
-- Bot Telegram indépendant (`audio-transcript-bot`), code dans son propre dossier/repo,
-  séparé de `Gmail-Agent`.
-- Cloné et installé sur le VPS (`~/audio-transcript-bot`), venv + dépendances + ffmpeg + Playwright.
-- `.env` et `credentials.json` configurés et transférés sur le VPS (via `scp`, jamais via git).
-- Autorisation Google Drive (OAuth `drive.file`) faite avec succès — `token.json` généré et
-  fonctionnel sur le VPS (via `scripts/authorize_drive.py` + tunnel SSH).
-- Upload de fichiers vers Drive : prêt à l'usage (`drive_client.py`).
-- Bureau graphique XFCE + serveur VNC (TigerVNC) installés et fonctionnels sur le VPS,
-  accessible depuis le PC via tunnel SSH (`ssh -L 5901:localhost:5901 ...`) + TigerVNC Viewer.
+L'approche initiale (upload Google Drive + génération automatique des sous-titres
+via Playwright) est **abandonnée** : Google bloque systématiquement toute connexion
+pilotée par un navigateur automatisé (CDP), quel que soit le navigateur utilisé
+(Chromium embarqué ou vrai Chrome, headless ou headed). Voir l'historique de
+conversation pour le détail des tentatives.
 
-## Ce qui est bloqué
+## Nouveau workflow (en cours de construction)
 
-**Génération automatique des sous-titres via la fonction native de Google Drive
-(`captions_playwright.py`) : bloquée définitivement.**
+1. Envoi d'un audio au bot Telegram, avec le **nom de la personne** dans le message.
+2. Transcription **locale et gratuite** via `faster-whisper` (même approche que
+   `voice.py` dans Gmail-Agent — pas d'API payante).
+3. Le texte transcrit + le nom sont envoyés à **Claude** (API Anthropic) qui :
+   - cherche le contact correspondant dans la base CRM Notion existante
+   - crée un nouveau contact si aucune correspondance
+   - logue l'appel (transcription + date) associé à ce contact
+4. Notification Telegram de confirmation.
 
-- Google refuse la connexion à tout navigateur piloté par Playwright avec le message
-  *"Couldn't sign you in — This browser or app may not be secure"*.
-- Testé sans succès :
-  - Chromium embarqué par Playwright, headless et headed
-  - Vrai Google Chrome (`channel="chrome"`) + `--no-sandbox`, sur un vrai bureau VNC
-- Conclusion : Google détecte la session pilotée par CDP (Chrome DevTools Protocol)
-  indépendamment du navigateur utilisé. Impossible à contourner sans techniques
-  d'évasion de la détection anti-bot, qu'on a choisi de ne pas utiliser.
+Objectif à terme : pouvoir retracer tous les appels échangés avec une personne donnée.
 
-## Décision à prendre pour la suite (3 options, non tranchée)
+## Nettoyage effectué
 
-1. **API Whisper (OpenAI)** — ~11 €/mois pour 1h d'audio/jour. Entièrement automatisé,
-   fiable, pas de risque de blocage. Nécessite de réécrire l'étape de transcription
-   dans `bot.py` (appel API au lieu de Playwright) et de supprimer `captions_playwright.py`.
+Supprimés (code mort de l'ancienne approche Drive/Playwright) :
+- `captions_playwright.py`, `drive_client.py`, `convert.py`, `scripts/authorize_drive.py`
+- `assets/black.png`, `assets/generate_black_image.sh`, `deploy/audio-transcript-bot.service`
+- Variables `.env`/`config.py` liées à Drive/Playwright (`DRIVE_FOLDER_ID`,
+  `GOOGLE_CREDENTIALS_PATH`, `GOOGLE_TOKEN_PATH`, `PLAYWRIGHT_*`, `BLACK_IMAGE_PATH`,
+  `CAPTION_GENERATION_TIMEOUT_S`)
+- `requirements.txt` nettoyé (retrait `google-api-python-client`, `google-auth-*`,
+  `playwright` ; ajout `faster-whisper`, `anthropic`, `notion-client`)
 
-2. **Continuer à chercher un contournement légitime** — poser la question à une
-   communauté technique (message déjà rédigé) pour voir s'il existe une méthode
-   supportée d'obtenir une session Google authentifiée sur un serveur pour ce cas d'usage.
+**Reste à faire sur le VPS** (pas encore nettoyé côté serveur) :
+- Supprimer `credentials.json`, `token.json`, `chrome-profile/` (secrets/session
+  Google Drive obsolètes)
 
-3. **Semi-automatique avec Gemini (Google One)** — gratuit, inclus dans l'abonnement
-   existant de l'utilisateur. Le bot ferait : réception Telegram → renommage → upload
-   Drive (fichier audio brut, pas besoin de conversion MP4/image noire) → notification
-   avec lien Drive. La transcription serait déclenchée manuellement par l'utilisateur
-   via "Demander à Gemini" dans Drive (2-3 clics), pas d'automatisation de connexion Google.
-   Impliquerait de simplifier le code : suppression de `convert.py`,
-   `captions_playwright.py`, et de toute la partie VNC/Playwright du déploiement.
+**Conservé volontairement sur le VPS** (infrastructure générique réutilisable pour
+de futurs projets) : `xfce4`, `tigervnc-standalone-server`, `google-chrome-stable`,
+Playwright (Chromium).
+
+## Point d'architecture à trancher
+
+Le bot tournera comme **script Python autonome** sur le VPS (pas dans une session
+Claude Code) — il devra donc appeler l'API Notion directement (librairie
+`notion-client`), pas via le protocole MCP (MCP est spécifique aux clients comme
+Claude Code/Desktop, pas embarquable dans un script headless déployé).
 
 ## Repo
 
-Code source : https://github.com/rol-botsan/audio-transcript-bot (privé)
+https://github.com/rol-botsan/audio-transcript-bot (privé)
 
-## Fichiers clés
+## Prochaine étape
 
-- `bot.py` — handlers Telegram + orchestration
-- `convert.py` — conversion audio → MP4 (utile seulement si option Drive-native reprise un jour)
-- `drive_client.py` — upload Google Drive (fonctionnel)
-- `captions_playwright.py` — génération sous-titres via Drive (bloqué, cf. ci-dessus)
-- `config.py` — configuration via `.env`
-- `scripts/authorize_drive.py` — script d'autorisation OAuth Drive (fonctionnel)
-- `deploy/audio-transcript-bot.service` — unité systemd (pas encore installée/activée sur le VPS)
-
-## Prochaine étape à la reprise
-
-Choisir entre les options 1/2/3 ci-dessus, puis reprendre à partir de la tâche
-"Deploy systemd service" (le service n'est pas encore configuré/démarré sur le VPS).
+Écrire le nouveau pipeline dans `bot.py` : transcription faster-whisper → appel
+Claude (function calling / tool use pour chercher-créer le contact Notion et logger
+l'appel) → notification Telegram.

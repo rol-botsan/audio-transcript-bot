@@ -7,9 +7,6 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 import config
-from captions_playwright import generate_captions_and_get_link
-from convert import audio_to_mp4
-from drive_client import get_drive_service, upload_video
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -72,24 +69,16 @@ async def handle_audio_file(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def _process_audio(context: ContextTypes.DEFAULT_TYPE, chat_id: int, audio_path: Path, base_name: str) -> None:
-    mp4_path = WORK_DIR / f"{base_name}.mp4"
     try:
-        await asyncio.to_thread(audio_to_mp4, audio_path, Path(config.BLACK_IMAGE_PATH), mp4_path)
-
-        service = await asyncio.to_thread(get_drive_service)
-        file_id, _ = await asyncio.to_thread(upload_video, service, mp4_path, f"{base_name}.mp4")
-
-        transcript_link = await generate_captions_and_get_link(file_id, timeout_s=config.CAPTION_GENERATION_TIMEOUT_S)
-
-        await _send_with_retry(
-            context, chat_id, f"✅ Transcription prête pour \"{base_name}\" :\n{transcript_link}"
-        )
+        # TODO: transcribe locally with faster-whisper, then send transcript +
+        # base_name (contact name) to Claude to match/create the Notion contact
+        # and log the call there.
+        raise NotImplementedError("Nouveau pipeline transcription -> Notion pas encore implémenté")
     except Exception:
         logger.exception("Échec du traitement de %s", audio_path)
         await _send_with_retry(context, chat_id, f"❌ Échec du traitement de \"{base_name}\". Voir les logs.")
     finally:
         audio_path.unlink(missing_ok=True)
-        mp4_path.unlink(missing_ok=True)
 
 
 def main() -> None:
