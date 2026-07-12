@@ -25,12 +25,14 @@ _TOOL = {
             "key_points": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Points cles structurants abordes pendant l'appel, sous forme de puces courtes.",
+                "maxItems": 8,
+                "description": "Points cles structurants abordes pendant l'appel, sous forme de puces courtes. Maximum 8, moins si l'appel est court.",
             },
             "next_steps": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Actions concretes a suivre apres cet appel, sous forme de puces courtes.",
+                "maxItems": 8,
+                "description": "Actions concretes a suivre apres cet appel, sous forme de puces courtes. Maximum 8, moins si l'appel est court.",
             },
         },
         "required": ["summary", "key_points", "next_steps"],
@@ -45,6 +47,10 @@ class CallSummary:
     next_steps: list[str]
 
 
+_MAX_INPUT_TRANSCRIPT_CHARS = 20_000
+_MAX_ITEMS = 8
+
+
 def get_client() -> anthropic.Anthropic:
     global _client
     if _client is None:
@@ -53,6 +59,9 @@ def get_client() -> anthropic.Anthropic:
 
 
 def summarize_call(transcript: str, contact_name: str) -> CallSummary:
+    if len(transcript) > _MAX_INPUT_TRANSCRIPT_CHARS:
+        transcript = transcript[:_MAX_INPUT_TRANSCRIPT_CHARS] + "\n\n[transcription tronquée]"
+
     client = get_client()
     message = client.messages.create(
         model=config.CLAUDE_MODEL,
@@ -65,7 +74,8 @@ def summarize_call(transcript: str, contact_name: str) -> CallSummary:
                 "content": (
                     f"Voici la transcription brute d'un appel avec {contact_name}. "
                     "Structure-la en resume, points cles et prochaines etapes, "
-                    "de facon concise et actionnable.\n\n"
+                    "de facon concise et actionnable. Maximum 8 points cles et "
+                    "8 prochaines etapes, moins si l'appel est court ou repetitif.\n\n"
                     f"Transcription :\n{transcript}"
                 ),
             }
@@ -77,8 +87,8 @@ def summarize_call(transcript: str, contact_name: str) -> CallSummary:
             data = block.input
             return CallSummary(
                 summary=data["summary"],
-                key_points=data["key_points"],
-                next_steps=data["next_steps"],
+                key_points=data["key_points"][:_MAX_ITEMS],
+                next_steps=data["next_steps"][:_MAX_ITEMS],
             )
 
     raise RuntimeError("Claude n'a pas retourné de résumé structuré (log_call_summary)")
