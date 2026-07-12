@@ -25,7 +25,7 @@ import config
 flow = InstalledAppFlow.from_client_secrets_file(
     config.GOOGLE_CREDENTIALS_PATH, config.DRIVE_SCOPES
 )
-creds = flow.run_local_server(port=8080, open_browser=False)
+creds = flow.run_local_server(port=8080, open_browser=False, timeout_seconds=600)
 
 Path(config.GOOGLE_TOKEN_PATH).write_text(creds.to_json())
 print(f"OK - token sauvegardé dans {config.GOOGLE_TOKEN_PATH}")
