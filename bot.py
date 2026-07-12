@@ -1,12 +1,15 @@
 import asyncio
 import logging
-import re
+from datetime import datetime
 from pathlib import Path
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 import config
+from claude_agent import summarize_call
+from notion_helper import create_call_page, get_or_create_contact_page_id
+from transcribe import transcribe_audio
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -17,12 +20,6 @@ WORK_DIR.mkdir(parents=True, exist_ok=True)
 
 def _is_authorized(update: Update) -> bool:
     return bool(update.effective_chat) and update.effective_chat.id == config.TELEGRAM_CHAT_ID
-
-
-def _sanitize_filename(name: str) -> str:
-    name = name.strip()
-    name = re.sub(r'[\\/*?:"<>|]', "_", name)
-    return name[:150] or "audio"
 
 
 async def _send_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str, retries: int = 3) -> None:
@@ -40,8 +37,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update):
         return
     await update.message.reply_text(
-        "Envoie-moi un fichier audio (.mp3/.m4a/.amr). "
-        "Ajoute un texte au message pour renommer le fichier, sinon le nom original est conservé."
+        "Envoie-moi un fichier audio (.mp3/.m4a/.amr) en ajoutant le nom de la "
+        "personne dans le message (texte accompagnant le fichier). "
+        "Je transcris l'appel et je le logue dans son dossier Notion."
     )
 
 
@@ -54,29 +52,58 @@ async def handle_audio_file(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if audio_obj is None:
         return
 
-    original_name = getattr(audio_obj, "file_name", None) or f"audio_{audio_obj.file_unique_id}"
-    caption_text = (message.caption or "").strip()
-    base_name = _sanitize_filename(caption_text) if caption_text else Path(original_name).stem
-    ext = Path(original_name).suffix or ".mp3"
+    contact_name = (message.caption or "").strip()
+    if not contact_name:
+        await message.reply_text(
+            "Merci d'ajouter le nom de la personne dans le message accompagnant l'audio."
+        )
+        return
 
-    await message.reply_text(f"Reçu : {original_name}. Traitement en cours...")
+    original_name = getattr(audio_obj, "file_name", None) or f"audio_{audio_obj.file_unique_id}"
+    ext = Path(original_name).suffix or ".mp3"
+    call_time = datetime.now()
+
+    await message.reply_text(f"Reçu, appel avec {contact_name}. Transcription en cours...")
 
     tg_file = await audio_obj.get_file()
-    audio_path = WORK_DIR / f"{base_name}{ext}"
+    audio_path = WORK_DIR / f"{audio_obj.file_unique_id}{ext}"
     await tg_file.download_to_drive(custom_path=str(audio_path))
 
-    asyncio.create_task(_process_audio(context, message.chat_id, audio_path, base_name))
+    asyncio.create_task(_process_audio(context, message.chat_id, audio_path, contact_name, call_time))
 
 
-async def _process_audio(context: ContextTypes.DEFAULT_TYPE, chat_id: int, audio_path: Path, base_name: str) -> None:
+async def _process_audio(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    audio_path: Path,
+    contact_name: str,
+    call_time: datetime,
+) -> None:
     try:
-        # TODO: transcribe locally with faster-whisper, then send transcript +
-        # base_name (contact name) to Claude to match/create the Notion contact
-        # and log the call there.
-        raise NotImplementedError("Nouveau pipeline transcription -> Notion pas encore implémenté")
+        transcript = await asyncio.to_thread(transcribe_audio, audio_path)
+        summary = await asyncio.to_thread(summarize_call, transcript, contact_name)
+
+        contact_page_id = await asyncio.to_thread(get_or_create_contact_page_id, contact_name)
+
+        title = f"Appel — {call_time.strftime('%d/%m/%Y %H:%M')}"
+        call_page_id = await asyncio.to_thread(
+            create_call_page,
+            contact_page_id,
+            title,
+            summary.summary,
+            summary.key_points,
+            summary.next_steps,
+        )
+
+        notion_url = f"https://notion.so/{call_page_id.replace('-', '')}"
+        await _send_with_retry(
+            context, chat_id, f"✅ Appel avec {contact_name} logué dans Notion :\n{notion_url}"
+        )
     except Exception:
         logger.exception("Échec du traitement de %s", audio_path)
-        await _send_with_retry(context, chat_id, f"❌ Échec du traitement de \"{base_name}\". Voir les logs.")
+        await _send_with_retry(
+            context, chat_id, f"❌ Échec du traitement de l'appel avec {contact_name}. Voir les logs."
+        )
     finally:
         audio_path.unlink(missing_ok=True)
 
