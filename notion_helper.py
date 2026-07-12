@@ -73,21 +73,19 @@ def _paragraph(text: str) -> dict:
 
 
 _NOTION_TEXT_LIMIT = 2000
+_NOTION_CHILDREN_LIMIT = 100
+# Garde-fou : au-delà de ça, la transcription est presque certainement une
+# hallucination de faster-whisper (boucle de répétition), pas un vrai appel.
+_MAX_TRANSCRIPT_CHARS = 50_000
 
 
 def _chunk_text(text: str, size: int = _NOTION_TEXT_LIMIT) -> list[str]:
     return [text[i : i + size] for i in range(0, len(text), size)] or [""]
 
 
-def _transcript_toggle(transcript: str) -> dict:
-    return {
-        "object": "block",
-        "type": "toggle",
-        "toggle": {
-            "rich_text": [{"type": "text", "text": {"content": "Transcription complète"}}],
-            "children": [_paragraph(chunk) for chunk in _chunk_text(transcript)],
-        },
-    }
+def _batched(items: list, size: int = _NOTION_CHILDREN_LIMIT):
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
 
 
 def create_call_page(
@@ -106,7 +104,6 @@ def create_call_page(
         *_bulleted_list(key_points),
         _heading("Prochaines étapes"),
         *_bulleted_list(next_steps),
-        _transcript_toggle(transcript),
     ]
     page = client.pages.create(
         parent={"type": "page_id", "page_id": contact_page_id},
@@ -114,4 +111,28 @@ def create_call_page(
         icon={"type": "emoji", "emoji": "📞"},
         children=children,
     )
-    return page["id"]
+    page_id = page["id"]
+
+    if len(transcript) > _MAX_TRANSCRIPT_CHARS:
+        transcript = (
+            transcript[:_MAX_TRANSCRIPT_CHARS]
+            + "\n\n[Transcription tronquée : anormalement longue, probable erreur de transcription]"
+        )
+
+    toggle = client.blocks.children.append(
+        block_id=page_id,
+        children=[
+            {
+                "object": "block",
+                "type": "toggle",
+                "toggle": {"rich_text": [{"type": "text", "text": {"content": "Transcription complète"}}]},
+            }
+        ],
+    )
+    toggle_id = toggle["results"][0]["id"]
+
+    transcript_blocks = [_paragraph(chunk) for chunk in _chunk_text(transcript)]
+    for batch in _batched(transcript_blocks):
+        client.blocks.children.append(block_id=toggle_id, children=batch)
+
+    return page_id
