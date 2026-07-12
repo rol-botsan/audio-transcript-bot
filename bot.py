@@ -93,6 +93,7 @@ async def _process_audio(
             summary.summary,
             summary.key_points,
             summary.next_steps,
+            transcript,
         )
 
         notion_url = f"https://notion.so/{call_page_id.replace('-', '')}"

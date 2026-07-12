@@ -72,12 +72,31 @@ def _paragraph(text: str) -> dict:
     }
 
 
+_NOTION_TEXT_LIMIT = 2000
+
+
+def _chunk_text(text: str, size: int = _NOTION_TEXT_LIMIT) -> list[str]:
+    return [text[i : i + size] for i in range(0, len(text), size)] or [""]
+
+
+def _transcript_toggle(transcript: str) -> dict:
+    return {
+        "object": "block",
+        "type": "toggle",
+        "toggle": {
+            "rich_text": [{"type": "text", "text": {"content": "Transcription complète"}}],
+            "children": [_paragraph(chunk) for chunk in _chunk_text(transcript)],
+        },
+    }
+
+
 def create_call_page(
     contact_page_id: str,
     title: str,
     summary: str,
     key_points: list[str],
     next_steps: list[str],
+    transcript: str,
 ) -> str:
     client = get_client()
     children = [
@@ -87,6 +106,7 @@ def create_call_page(
         *_bulleted_list(key_points),
         _heading("Prochaines étapes"),
         *_bulleted_list(next_steps),
+        _transcript_toggle(transcript),
     ]
     page = client.pages.create(
         parent={"type": "page_id", "page_id": contact_page_id},
