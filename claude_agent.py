@@ -4,11 +4,14 @@ Utilise le tool use pour forcer une sortie structuree (resume, points cles,
 prochaines etapes) plutot que de parser du texte libre.
 """
 
+import logging
 from dataclasses import dataclass
 
 import anthropic
 
 import config
+
+logger = logging.getLogger(__name__)
 
 _client = None
 
@@ -65,7 +68,7 @@ def summarize_call(transcript: str, contact_name: str) -> CallSummary:
     client = get_client()
     message = client.messages.create(
         model=config.CLAUDE_MODEL,
-        max_tokens=1024,
+        max_tokens=4096,
         tools=[_TOOL],
         tool_choice={"type": "tool", "name": "log_call_summary"},
         messages=[
@@ -85,10 +88,12 @@ def summarize_call(transcript: str, contact_name: str) -> CallSummary:
     for block in message.content:
         if block.type == "tool_use" and block.name == "log_call_summary":
             data = block.input
+            if message.stop_reason == "max_tokens":
+                logger.warning("Réponse Claude tronquée (max_tokens atteint) pour l'appel avec %s", contact_name)
             return CallSummary(
-                summary=data["summary"],
-                key_points=data["key_points"][:_MAX_ITEMS],
-                next_steps=data["next_steps"][:_MAX_ITEMS],
+                summary=data.get("summary", "(résumé indisponible, réponse tronquée)"),
+                key_points=data.get("key_points", [])[:_MAX_ITEMS],
+                next_steps=data.get("next_steps", [])[:_MAX_ITEMS],
             )
 
     raise RuntimeError("Claude n'a pas retourné de résumé structuré (log_call_summary)")
