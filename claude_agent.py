@@ -4,6 +4,7 @@ Utilise le tool use pour forcer une sortie structuree (resume, points cles,
 prochaines etapes) plutot que de parser du texte libre.
 """
 
+import json
 import logging
 from dataclasses import dataclass
 
@@ -54,6 +55,23 @@ _MAX_INPUT_TRANSCRIPT_CHARS = 20_000
 _MAX_ITEMS = 8
 
 
+def _ensure_list(value) -> list[str]:
+    """Claude renvoie parfois un tableau sous forme de chaîne JSON au lieu
+    d'un vrai tableau ; on le reparse plutôt que de l'itérer caractère par
+    caractère."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return [value] if value.strip() else []
+    return []
+
+
 def get_client() -> anthropic.Anthropic:
     global _client
     if _client is None:
@@ -92,8 +110,8 @@ def summarize_call(transcript: str, contact_name: str) -> CallSummary:
                 logger.warning("Réponse Claude tronquée (max_tokens atteint) pour l'appel avec %s", contact_name)
             return CallSummary(
                 summary=data.get("summary", "(résumé indisponible, réponse tronquée)"),
-                key_points=data.get("key_points", [])[:_MAX_ITEMS],
-                next_steps=data.get("next_steps", [])[:_MAX_ITEMS],
+                key_points=_ensure_list(data.get("key_points", []))[:_MAX_ITEMS],
+                next_steps=_ensure_list(data.get("next_steps", []))[:_MAX_ITEMS],
             )
 
     raise RuntimeError("Claude n'a pas retourné de résumé structuré (log_call_summary)")
